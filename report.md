@@ -175,7 +175,10 @@
 - **时间变化**：
   - Total time：约从 75.6 s 增加到 466.3 s，主要原因是：
     - LoRA 配置中使用了更大的学习率与更复杂的优化过程；
-    - LoRA 在 3B 模型上虽然显存优势明显，但在 wall-clock time 上并非针对性优化。
+  - LoRA 在 3B 模型上虽然显存优势明显，但在 wall-clock time 上并非针对性优化。
+- 对应的总训练时间对比图如下：  
+  
+  ![Finetuning total time comparison](plots/finetune_time.png)
 - **结论**：
   - LoRA 在本实验中主要体现为**显存占用显著下降、可训练参数极大减少**（仅约 0.14% 参数可训练），更适合大模型有限显存场景。
 
@@ -205,6 +208,9 @@
   - 但对于 3B 模型，训练时间仍然在可接受范围。
 - **结论**：
   - QLoRA 在单卡 5090 上表现出极强的**显存优势**：在 3B 模型、batch=4、seq=512 的设定下，将微调显存控制在约 7 GB 左右，为进一步放大模型规模或增加 batch size 留出了空间。
+- 对应的每 epoch 时间对比图如下：  
+  
+  ![Finetuning per-epoch time comparison](plots/finetune_time_per_epoch.png)
 
 #### 5.3.4 QLoRA vs QLoRA+GC（多级组合效应分析）
 
