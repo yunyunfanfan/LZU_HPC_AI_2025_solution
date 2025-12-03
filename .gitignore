@@ -1,0 +1,7 @@
+# 忽略训练输出和结果文件夹
+baseline_finetune_output/
+baseline_results/
+optimized_finetune_output/
+optimized_results/
+# 忽略大型模型权重目录
+Llama-3.2-3B-Instruct/
