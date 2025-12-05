@@ -3,7 +3,7 @@ Generate comparison plots from existing JSON metric files for the report.
 
 Two main parts:
 1. Inference speedup: Baseline vs INT4 quantization
-2. Finetuning speedup: Full fine-tuning vs LoRA / LoRA+GC / QLoRA / QLoRA+GC
+2. Finetuning speedup: Full fine-tuning vs LoRA / LoRA+GC / QLoRA / QLoRA+GC / ZeRO combinations
 
 Outputs (saved under ./plots/):
 - inference_latency.png
@@ -105,21 +105,30 @@ def plot_inference():
 
 
 def plot_finetune():
-    """Finetuning baseline vs LoRA / LoRA+GC / QLoRA / QLoRA+GC comparison plots."""
+    """Finetuning baseline vs LoRA / LoRA+GC / QLoRA / QLoRA+GC / ZeRO comparison plots."""
     print("\n=== Generating finetuning comparison plots ===")
 
-    # 各结果文件路径
+    # 各结果文件路径（按显存占用从高到低排序，便于对比）
     paths = {
         "Baseline": BASE_DIR / "baseline_finetune_output" / "baseline_finetune_metrics.json",
         "LoRA": BASE_DIR / "optimized_finetune_output" / "lora" / "baseline_finetune_metrics.json",
         "LoRA+GC": BASE_DIR / "optimized_finetune_output" / "lora_gc" / "baseline_finetune_metrics.json",
+        "LoRA+ZeRO-2": BASE_DIR / "optimized_finetune_output" / "lora_zero2" / "baseline_finetune_metrics.json",
+        "LoRA+ZeRO-3": BASE_DIR / "optimized_finetune_output" / "lora_zero3" / "baseline_finetune_metrics.json",
+        "LoRA+ZeRO-2+GC": BASE_DIR / "optimized_finetune_output" / "lora_zero2_gc" / "baseline_finetune_metrics.json",
+        "LoRA+ZeRO-3+GC": BASE_DIR / "optimized_finetune_output" / "lora_zero3_gc" / "baseline_finetune_metrics.json",
         "QLoRA": BASE_DIR / "optimized_finetune_output" / "qlora" / "baseline_finetune_metrics.json",
         "QLoRA+GC": BASE_DIR / "optimized_finetune_output" / "qlora_gc" / "baseline_finetune_metrics.json",
+        "QLoRA+ZeRO-2": BASE_DIR / "optimized_finetune_output" / "qlora_zero2" / "baseline_finetune_metrics.json",
+        "QLoRA+ZeRO-3": BASE_DIR / "optimized_finetune_output" / "qlora_zero3" / "baseline_finetune_metrics.json",
+        "QLoRA+ZeRO-2+GC": BASE_DIR / "optimized_finetune_output" / "qlora_zero2_gc" / "baseline_finetune_metrics.json",
+        "QLoRA+ZeRO-3+GC": BASE_DIR / "optimized_finetune_output" / "qlora_zero3_gc" / "baseline_finetune_metrics.json",
     }
 
     methods = []
     times = []
     mems = []
+    time_per_epoch_list = []
 
     for name, path in paths.items():
         data = load_json(path)
@@ -129,6 +138,10 @@ def plot_finetune():
         methods.append(name)
         times.append(metrics.get("total_time_seconds", 0.0))
         mems.append(metrics.get("peak_memory_gb", 0.0))
+        # Calculate time per epoch
+        num_epochs = metrics.get("num_epochs", 2)
+        total_time = metrics.get("total_time_seconds", 0.0)
+        time_per_epoch_list.append(total_time / num_epochs if total_time > 0 else 0.0)
 
     if not methods:
         print("[WARN] No finetune metric files found, skip finetune plots")
@@ -140,38 +153,38 @@ def plot_finetune():
     sns.set_style("whitegrid")
 
     # Total training time comparison
-    plt.figure(figsize=(8, 4))
+    plt.figure(figsize=(14, 6))
     ax = sns.barplot(x=methods, y=times, palette="Oranges")
-    ax.set_ylabel("Total training time (s)")
-    ax.set_title("Finetuning total time comparison")
+    ax.set_ylabel("Total training time (s)", fontsize=12)
+    ax.set_xlabel("Method", fontsize=12)
+    ax.set_title("Finetuning total time comparison", fontsize=14, fontweight="bold")
+    plt.xticks(rotation=45, ha="right")
     for i, v in enumerate(times):
         label = f"{v:.1f}"
         if baseline_time and i > 0 and v > 0:
             speed = baseline_time / v
             label += f"\n({speed:.2f}x)"
-        ax.text(i, v, label, ha="center", va="bottom")
+        ax.text(i, v, label, ha="center", va="bottom", fontsize=9)
     plt.tight_layout()
     out_path = PLOTS_DIR / "finetune_time.png"
     plt.savefig(out_path, dpi=200)
     plt.close()
     print(f"[OK] saved finetune total time plot: {out_path}")
 
-    # Time per epoch comparison (derived)
-    time_per_epoch = []
-    for t in times:
-        # All experiments use the same num_epochs; divide by 2 for clarity
-        time_per_epoch.append(t / 2 if t > 0 else 0.0)
-
-    plt.figure(figsize=(8, 4))
-    ax = sns.barplot(x=methods, y=time_per_epoch, palette="Reds")
-    ax.set_ylabel("Time per epoch (s)")
-    ax.set_title("Finetuning time per epoch comparison")
-    for i, v in enumerate(time_per_epoch):
+    # Time per epoch comparison
+    plt.figure(figsize=(14, 6))
+    ax = sns.barplot(x=methods, y=time_per_epoch_list, palette="Reds")
+    ax.set_ylabel("Time per epoch (s)", fontsize=12)
+    ax.set_xlabel("Method", fontsize=12)
+    ax.set_title("Finetuning time per epoch comparison", fontsize=14, fontweight="bold")
+    plt.xticks(rotation=45, ha="right")
+    baseline_time_per_epoch = time_per_epoch_list[0] if methods[0] == "Baseline" else None
+    for i, v in enumerate(time_per_epoch_list):
         label = f"{v:.1f}"
-        if baseline_time and i > 0 and v > 0:
-            speed = (baseline_time / 2) / v
+        if baseline_time_per_epoch and i > 0 and v > 0:
+            speed = baseline_time_per_epoch / v
             label += f"\n({speed:.2f}x)"
-        ax.text(i, v, label, ha="center", va="bottom")
+        ax.text(i, v, label, ha="center", va="bottom", fontsize=9)
     plt.tight_layout()
     out_path = PLOTS_DIR / "finetune_time_per_epoch.png"
     plt.savefig(out_path, dpi=200)
@@ -179,17 +192,19 @@ def plot_finetune():
     print(f"[OK] saved finetune per-epoch time plot: {out_path}")
 
     # Peak memory comparison
-    plt.figure(figsize=(8, 4))
+    plt.figure(figsize=(14, 6))
     ax = sns.barplot(x=methods, y=mems, palette="Purples")
-    ax.set_ylabel("Peak memory (GB)")
-    ax.set_title("Finetuning peak memory comparison")
+    ax.set_ylabel("Peak memory (GB)", fontsize=12)
+    ax.set_xlabel("Method", fontsize=12)
+    ax.set_title("Finetuning peak memory comparison", fontsize=14, fontweight="bold")
+    plt.xticks(rotation=45, ha="right")
     base_mem = mems[0] if methods[0] == "Baseline" else None
     for i, v in enumerate(mems):
         label = f"{v:.2f}"
         if base_mem and i > 0 and base_mem > 0:
             reduction = (base_mem - v) / base_mem * 100
             label += f"\n(-{reduction:.1f}%)"
-        ax.text(i, v, label, ha="center", va="bottom")
+        ax.text(i, v, label, ha="center", va="bottom", fontsize=9)
     plt.tight_layout()
     out_path = PLOTS_DIR / "finetune_memory.png"
     plt.savefig(out_path, dpi=200)

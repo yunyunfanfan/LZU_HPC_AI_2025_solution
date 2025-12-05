@@ -286,7 +286,158 @@ Output metrics:
 
 - `optimized_finetune_output/qlora_gc/baseline_finetune_metrics.json`
 
-### 6.6 QLoRA + DeepSpeed ZeRO-2 finetuning
+### 6.6 LoRA + DeepSpeed ZeRO-2 finetuning
+
+Script: `finetune_zero2.py` with `--use_lora` and DeepSpeed ZeRO-2.
+
+**Prerequisites**: Same as QLoRA+ZeRO-2 (see section 6.7). DeepSpeed requires CUDA Toolkit to be installed on Windows host and configured in WSL.
+
+**Run training**:
+
+```bash
+cd /mnt/d/LZU-HPC_2025_AI
+
+bash deepspeed_wrapper.sh --num_gpus=1 finetune_zero2.py \
+  --model_name ./Llama-3.2-3B-Instruct \
+  --dataset_name wikitext \
+  --dataset_config wikitext-2-raw-v1 \
+  --use_lora \
+  --num_epochs 2 \
+  --batch_size 4 \
+  --learning_rate 2e-4 \
+  --max_length 512 \
+  --num_samples 4000 \
+  --output_dir ./optimized_finetune_output/lora_zero2 \
+  --device cuda \
+  --deepspeed_config ds_zero2.json
+```
+
+**Note**: The `deepspeed_wrapper.sh` script automatically:
+- Sets `CUDA_HOME` to the correct CUDA Toolkit path
+- Creates a symlink to avoid path space issues
+- Sets `DS_BUILD_OPS=0` to disable CUDA extension compilation (uses standard PyTorch optimizer)
+- Activates the `hpc` conda environment if not already active
+
+**Comparison with LoRA**:
+- In single-GPU environment, LoRA+ZeRO-2 has the same memory usage (16.26 GB) as pure LoRA, but longer training time (541.44 s vs 466.31 s).
+- This is because LoRA only trains a small fraction of parameters (~0.14%), so optimizer state memory is already small, and ZeRO-2's sharding overhead outweighs the benefits.
+- For LoRA, if memory is sufficient, use pure LoRA; if memory is tight, consider QLoRA or LoRA+GC instead.
+
+Output metrics:
+
+- `optimized_finetune_output/lora_zero2/baseline_finetune_metrics.json`
+
+### 6.7 LoRA + DeepSpeed ZeRO-2 + Gradient Checkpointing finetuning
+
+Script: `finetune_zero2.py` with `--use_lora`, `--gradient_checkpointing`, and DeepSpeed ZeRO-2.
+
+**Prerequisites**: Same as LoRA+ZeRO-2 (see section 6.6).
+
+**Run training**:
+
+```bash
+cd /mnt/d/LZU-HPC_2025_AI
+
+bash deepspeed_wrapper.sh --num_gpus=1 finetune_zero2.py \
+  --model_name ./Llama-3.2-3B-Instruct \
+  --dataset_name wikitext \
+  --dataset_config wikitext-2-raw-v1 \
+  --use_lora \
+  --gradient_checkpointing \
+  --num_epochs 2 \
+  --batch_size 4 \
+  --learning_rate 2e-4 \
+  --max_length 512 \
+  --num_samples 4000 \
+  --output_dir ./optimized_finetune_output/lora_zero2_gc \
+  --device cuda \
+  --deepspeed_config ds_zero2.json
+```
+
+**Note**: This combines LoRA, ZeRO-2, and Gradient Checkpointing for maximum memory efficiency. The combination should provide:
+- LoRA: Reduces trainable parameters (~0.14%)
+- ZeRO-2: Shards optimizer states
+- GC: Reduces activation memory by recomputing during backward pass
+
+Output metrics:
+
+- `optimized_finetune_output/lora_zero2_gc/baseline_finetune_metrics.json`
+
+### 6.8 LoRA + DeepSpeed ZeRO-3 + Gradient Checkpointing finetuning
+
+Script: `finetune_zero3.py` with `--use_lora`, `--gradient_checkpointing`, and DeepSpeed ZeRO-3.
+
+**Prerequisites**: Same as LoRA+ZeRO-3 (see section 6.9).
+
+**Run training**:
+
+```bash
+cd /mnt/d/LZU-HPC_2025_AI
+
+bash deepspeed_wrapper.sh --num_gpus=1 finetune_zero3.py \
+  --model_name ./Llama-3.2-3B-Instruct \
+  --dataset_name wikitext \
+  --dataset_config wikitext-2-raw-v1 \
+  --use_lora \
+  --gradient_checkpointing \
+  --num_epochs 2 \
+  --batch_size 4 \
+  --learning_rate 2e-4 \
+  --max_length 512 \
+  --num_samples 4000 \
+  --output_dir ./optimized_finetune_output/lora_zero3_gc \
+  --device cuda \
+  --deepspeed_config ds_zero3.json
+```
+
+**Note**: This combines LoRA, ZeRO-3, and Gradient Checkpointing. However, experimental results show that this combination has no memory advantage over LoRA+GC, but significantly increases training time (+30.1%). **Not recommended** for single-GPU environments.
+
+Output metrics:
+
+- `optimized_finetune_output/lora_zero3_gc/baseline_finetune_metrics.json`
+
+### 6.9 LoRA + DeepSpeed ZeRO-3 finetuning
+
+Script: `finetune_zero3.py` with `--use_lora` and DeepSpeed ZeRO-3.
+
+**Prerequisites**: Same as LoRA+ZeRO-2 (see section 6.6). DeepSpeed requires CUDA Toolkit to be installed on Windows host and configured in WSL.
+
+**Run training**:
+
+```bash
+cd /mnt/d/LZU-HPC_2025_AI
+
+bash deepspeed_wrapper.sh --num_gpus=1 finetune_zero3.py \
+  --model_name ./Llama-3.2-3B-Instruct \
+  --dataset_name wikitext \
+  --dataset_config wikitext-2-raw-v1 \
+  --use_lora \
+  --num_epochs 2 \
+  --batch_size 4 \
+  --learning_rate 2e-4 \
+  --max_length 512 \
+  --num_samples 4000 \
+  --output_dir ./optimized_finetune_output/lora_zero3 \
+  --device cuda \
+  --deepspeed_config ds_zero3.json
+```
+
+**Note**: The `deepspeed_wrapper.sh` script automatically:
+- Sets `CUDA_HOME` to the correct CUDA Toolkit path
+- Creates a symlink to avoid path space issues
+- Sets `DS_BUILD_OPS=0` to disable CUDA extension compilation (uses standard PyTorch optimizer)
+- Activates the `hpc` conda environment if not already active
+
+**Comparison with LoRA and LoRA+ZeRO-2**:
+- In single-GPU environment, LoRA+ZeRO-3 has similar memory usage (16.29 GB) as pure LoRA (16.26 GB) and LoRA+ZeRO-2 (16.26 GB), but longer training time (627.87 s vs 466.31 s for LoRA, vs 541.44 s for LoRA+ZeRO-2).
+- This confirms that ZeRO-3's additional parameter sharding overhead provides no benefit for LoRA, as LoRA only trains a small fraction of parameters (~0.14%).
+- For LoRA, if memory is sufficient, use pure LoRA; if memory is tight, consider QLoRA or LoRA+GC instead.
+
+Output metrics:
+
+- `optimized_finetune_output/lora_zero3/baseline_finetune_metrics.json`
+
+### 6.10 QLoRA + DeepSpeed ZeRO-2 finetuning
 
 Script: `finetune_zero2.py` with `--use_qlora` and DeepSpeed ZeRO-2.
 
@@ -341,7 +492,7 @@ Output metrics:
 
 - `optimized_finetune_output/qlora_zero2/baseline_finetune_metrics.json`
 
-### 6.7 QLoRA + DeepSpeed ZeRO-3 finetuning
+### 6.11 QLoRA + DeepSpeed ZeRO-3 finetuning
 
 Script: `finetune_zero3.py` with `--use_qlora` and DeepSpeed ZeRO-3.
 
@@ -382,7 +533,73 @@ Output metrics:
 
 - `optimized_finetune_output/qlora_zero3/baseline_finetune_metrics.json`
 
-### 6.8 Generate finetune comparison plots
+### 6.12 QLoRA + DeepSpeed ZeRO-2 + Gradient Checkpointing finetuning
+
+Script: `finetune_zero2.py` with `--use_qlora`, `--gradient_checkpointing`, and DeepSpeed ZeRO-2.
+
+**Prerequisites**: Same as QLoRA+ZeRO-2 (see section 6.10).
+
+**Run training**:
+
+```bash
+cd /mnt/d/LZU-HPC_2025_AI
+
+bash deepspeed_wrapper.sh --num_gpus=1 finetune_zero2.py \
+  --model_name ./Llama-3.2-3B-Instruct \
+  --dataset_name wikitext \
+  --dataset_config wikitext-2-raw-v1 \
+  --use_qlora \
+  --gradient_checkpointing \
+  --num_epochs 2 \
+  --batch_size 4 \
+  --learning_rate 2e-4 \
+  --max_length 512 \
+  --num_samples 4000 \
+  --output_dir ./optimized_finetune_output/qlora_zero2_gc \
+  --device cuda \
+  --deepspeed_config ds_zero2.json
+```
+
+**Note**: Experimental results show that QLoRA+ZeRO-2+GC has the same memory usage (5.45 GB) as QLoRA+ZeRO-2, but slightly longer training time (+2.1%). **Not recommended** as GC provides no additional benefit.
+
+Output metrics:
+
+- `optimized_finetune_output/qlora_zero2_gc/baseline_finetune_metrics.json`
+
+### 6.13 QLoRA + DeepSpeed ZeRO-3 + Gradient Checkpointing finetuning
+
+Script: `finetune_zero3.py` with `--use_qlora`, `--gradient_checkpointing`, and DeepSpeed ZeRO-3.
+
+**Prerequisites**: Same as QLoRA+ZeRO-3 (see section 6.11).
+
+**Run training**:
+
+```bash
+cd /mnt/d/LZU-HPC_2025_AI
+
+bash deepspeed_wrapper.sh --num_gpus=1 finetune_zero3.py \
+  --model_name ./Llama-3.2-3B-Instruct \
+  --dataset_name wikitext \
+  --dataset_config wikitext-2-raw-v1 \
+  --use_qlora \
+  --gradient_checkpointing \
+  --num_epochs 2 \
+  --batch_size 4 \
+  --learning_rate 2e-4 \
+  --max_length 512 \
+  --num_samples 4000 \
+  --output_dir ./optimized_finetune_output/qlora_zero3_gc \
+  --device cuda \
+  --deepspeed_config ds_zero3.json
+```
+
+**Note**: Experimental results show that QLoRA+ZeRO-3+GC has the same memory usage (5.48 GB) as QLoRA+ZeRO-3, and slightly faster training time (-1.5%). However, it is still 32.0% slower than QLoRA. **Not recommended** for single-GPU environments.
+
+Output metrics:
+
+- `optimized_finetune_output/qlora_zero3_gc/baseline_finetune_metrics.json`
+
+### 6.14 Generate finetune comparison plots
 
 After all finetune runs are finished, you can regenerate comparison plots:
 
