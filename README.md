@@ -34,7 +34,18 @@ conda activate hpc
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
 ```
 
-### 2.3 Clone / enter project directory
+### 2.3 Install DeepSpeed (optional, for ZeRO-2/3 experiments)
+
+If you want to run DeepSpeed ZeRO-2/3 experiments, install DeepSpeed:
+
+```bash
+conda activate hpc
+pip install deepspeed
+```
+
+**Note**: DeepSpeed requires CUDA Toolkit to be installed on Windows host. See section 6.6 for detailed setup instructions.
+
+### 2.4 Clone / enter project directory
 
 If you already have the project under `D:\LZU-HPC_2025_AI` on Windows,
 it will be visible in WSL as `/mnt/d/LZU-HPC_2025_AI`:
@@ -43,7 +54,7 @@ it will be visible in WSL as `/mnt/d/LZU-HPC_2025_AI`:
 cd /mnt/d/LZU-HPC_2025_AI
 ```
 
-### 2.4 Install Python dependencies
+### 2.5 Install Python dependencies
 
 ```bash
 pip install -r requirements.txt
@@ -86,9 +97,9 @@ All later scripts load the model from this local path.
 
 ---
 
-## 4. Inference Baseline & INT4 Quantization
+## 5. Inference Baseline & INT4 Quantization
 
-### 4.1 Baseline inference (FP16, low-concurrency)
+### 5.1 Baseline inference (FP16, low-concurrency)
 
 Script: `baseline_inference.py`  
 Task: 500 queries on `gsm8k(main)` with `batch_size=1`.
@@ -111,7 +122,7 @@ Output metrics:
 - `baseline_results/baseline_inference_metrics.json`
 - Keys: `avg_latency`, `throughput_tokens_per_sec`, `peak_memory_gb`, etc.
 
-### 4.2 INT4 quantized inference
+### 5.2 INT4 quantized inference
 
 Script: `optimized_inference.py`  
 Same data / setting, with 4‑bit quantization enabled.
@@ -145,7 +156,7 @@ Plots are saved under `./plots/` (e.g. `inference_latency.png`, `inference_memor
 
 ---
 
-## 5. Finetuning Experiments
+## 6. Finetuning Experiments
 
 All finetuning experiments use:
 
@@ -156,7 +167,7 @@ All finetuning experiments use:
 - Batch size: `--batch_size 4`
 - Max length: `--max_length 512`
 
-### 5.1 Full fine-tuning baseline
+### 6.1 Full fine-tuning baseline
 
 Script: `baseline_finetune.py`
 
@@ -179,7 +190,7 @@ Output metrics:
 
 - `baseline_finetune_output/baseline_finetune_metrics.json`
 
-### 5.2 LoRA finetuning
+### 6.2 LoRA finetuning
 
 Script: `finetune.py` with `--use_lora`.
 
@@ -204,7 +215,7 @@ Output metrics:
 
 - `optimized_finetune_output/lora/baseline_finetune_metrics.json`
 
-### 5.3 LoRA + Gradient Checkpointing (LoRA+GC)
+### 6.3 LoRA + Gradient Checkpointing (LoRA+GC)
 
 ```bash
 cd /mnt/d/LZU-HPC_2025_AI
@@ -228,7 +239,7 @@ Output metrics:
 
 - `optimized_finetune_output/lora_gc/baseline_finetune_metrics.json`
 
-### 5.4 QLoRA finetuning
+### 6.4 QLoRA finetuning
 
 ```bash
 cd /mnt/d/LZU-HPC_2025_AI
@@ -251,7 +262,7 @@ Output metrics:
 
 - `optimized_finetune_output/qlora/baseline_finetune_metrics.json`
 
-### 5.5 QLoRA + Gradient Checkpointing (QLoRA+GC)
+### 6.5 QLoRA + Gradient Checkpointing (QLoRA+GC)
 
 ```bash
 cd /mnt/d/LZU-HPC_2025_AI
@@ -275,7 +286,103 @@ Output metrics:
 
 - `optimized_finetune_output/qlora_gc/baseline_finetune_metrics.json`
 
-### 5.6 Generate finetune comparison plots
+### 6.6 QLoRA + DeepSpeed ZeRO-2 finetuning
+
+Script: `finetune_zero2.py` with `--use_qlora` and DeepSpeed ZeRO-2.
+
+**Prerequisites**: DeepSpeed requires CUDA Toolkit to be installed on Windows host and configured in WSL. See setup steps below.
+
+**Setup DeepSpeed environment**:
+
+1. Install CUDA Toolkit 13.0 on Windows (matching PyTorch's CUDA version):
+   - Download from: https://developer.nvidia.com/cuda-13-0-0-download-archive
+   - Install to default location: `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0`
+
+2. Configure CUDA in WSL:
+   ```bash
+   cd /mnt/d/LZU-HPC_2025_AI
+   bash install_cuda_toolkit_wsl.sh
+   source ~/.bashrc
+   ```
+
+3. Install DeepSpeed:
+   ```bash
+   conda activate hpc
+   pip install deepspeed
+   ```
+
+**Run training**:
+
+```bash
+cd /mnt/d/LZU-HPC_2025_AI
+
+bash deepspeed_wrapper.sh --num_gpus=1 finetune_zero2.py \
+  --model_name ./Llama-3.2-3B-Instruct \
+  --dataset_name wikitext \
+  --dataset_config wikitext-2-raw-v1 \
+  --use_qlora \
+  --num_epochs 2 \
+  --batch_size 4 \
+  --learning_rate 2e-4 \
+  --max_length 512 \
+  --num_samples 4000 \
+  --output_dir ./optimized_finetune_output/qlora_zero2 \
+  --device cuda \
+  --deepspeed_config ds_zero2.json
+```
+
+**Note**: The `deepspeed_wrapper.sh` script automatically:
+- Sets `CUDA_HOME` to the correct CUDA Toolkit path
+- Creates a symlink to avoid path space issues
+- Sets `DS_BUILD_OPS=0` to disable CUDA extension compilation (uses standard PyTorch optimizer)
+- Activates the `hpc` conda environment if not already active
+
+Output metrics:
+
+- `optimized_finetune_output/qlora_zero2/baseline_finetune_metrics.json`
+
+### 6.7 QLoRA + DeepSpeed ZeRO-3 finetuning
+
+Script: `finetune_zero3.py` with `--use_qlora` and DeepSpeed ZeRO-3.
+
+**Prerequisites**: Same as ZeRO-2 (see section 6.6). DeepSpeed requires CUDA Toolkit to be installed on Windows host and configured in WSL.
+
+**Run training**:
+
+```bash
+cd /mnt/d/LZU-HPC_2025_AI
+
+bash deepspeed_wrapper.sh --num_gpus=1 finetune_zero3.py \
+  --model_name ./Llama-3.2-3B-Instruct \
+  --dataset_name wikitext \
+  --dataset_config wikitext-2-raw-v1 \
+  --use_qlora \
+  --num_epochs 2 \
+  --batch_size 4 \
+  --learning_rate 2e-4 \
+  --max_length 512 \
+  --num_samples 4000 \
+  --output_dir ./optimized_finetune_output/qlora_zero3 \
+  --device cuda \
+  --deepspeed_config ds_zero3.json
+```
+
+**Note**: The `deepspeed_wrapper.sh` script automatically:
+- Sets `CUDA_HOME` to the correct CUDA Toolkit path
+- Creates a symlink to avoid path space issues
+- Sets `DS_BUILD_OPS=0` to disable CUDA extension compilation (uses standard PyTorch optimizer)
+- Activates the `hpc` conda environment if not already active
+
+**Comparison with ZeRO-2**:
+- ZeRO-3 further shards model parameters (in addition to optimizer states and gradients in ZeRO-2).
+- In single-GPU environment, ZeRO-3 has similar memory usage (5.48 GB vs 5.45 GB) but longer training time (503.26 s/epoch vs 351.12 s/epoch) due to additional parameter gather/shard overhead.
+- ZeRO-3's advantage is more evident in multi-GPU environments where parameters can be truly sharded across devices.
+
+Output metrics:
+
+- `optimized_finetune_output/qlora_zero3/baseline_finetune_metrics.json`
+
+### 6.8 Generate finetune comparison plots
 
 After all finetune runs are finished, you can regenerate comparison plots:
 
@@ -292,7 +399,7 @@ This will (re)create:
 
 ---
 
-## 6. QLoRA Profiler Run (Optional, for analysis)
+## 7. QLoRA Profiler Run (Optional, for analysis)
 
 To reproduce the PyTorch Profiler analysis:
 
@@ -310,7 +417,7 @@ This will:
 
 ---
 
-## 7. Summary
+## 8. Summary
 
 Following the steps above (environment setup → model download → baseline runs → LoRA/QLoRA variants → plotting scripts) will reproduce all the quantitative results and figures used in our report.  
 If hardware differs (e.g., GPU model or memory), absolute numbers will change, but **relative trends** (e.g., LoRA/QLoRA memory savings vs. full fine-tuning) should remain similar. 
