@@ -1111,24 +1111,53 @@ Self CUDA time total: 3.904s
 
 ### 10.2 PyTorch FSDP 的尝试
 
-我们尝试使用 PyTorch 原生的 FSDP（Fully Sharded Data Parallel）作为 DeepSpeed 的替代方案，因为 FSDP 不需要编译 CUDA 算子。然而遇到了以下技术限制：
+我们尝试使用 PyTorch 原生的 FSDP（Fully Sharded Data Parallel）作为 DeepSpeed 的替代方案，因为 FSDP 不需要编译 CUDA 算子。经过调研和实践，我们发现：
 
-- **与 QLoRA 的数据类型不兼容**：
-  - QLoRA 使用 4-bit 量化，量化后的参数类型为 `torch.uint8`，而模型的其他参数为 `torch.float16` 或 `torch.float32`。
-  - FSDP 在展平（flatten）参数时要求所有参数必须是统一的数据类型，因此无法处理 QLoRA 的混合数据类型。
-  - **错误信息**：`ValueError: Must flatten tensors with uniform dtype but got torch.uint8 and torch.float16`（QLoRA 模式）或 `torch.float16 and torch.float32`（LoRA 模式）。
+- **FSDP + LoRA 在技术上是可行的**：
+  - 根据实践教程（如 [CSDN 文章](https://blog.csdn.net/lockhou/article/details/154499440)），FSDP + LoRA 可以通过正确的操作顺序实现：
+    1. **先注入 LoRA，再包裹 FSDP**（顺序不能反）
+    2. **使用 `use_orig_params=True`** 解决参数冻结问题（PyTorch >= 2.2）
+    3. **优化器只选择 `requires_grad=True` 的参数**（即 LoRA 参数）
+  - 关键代码示例：
+    ```python
+    # ① 先注入 LoRA
+    model = get_peft_model(model, lora_config)
+    
+    # ② 再包裹 FSDP（关键：use_orig_params=True）
+    model = FSDP(model, use_orig_params=True)
+    
+    # ③ 优化器只拿 LoRA 参数
+    optimizer = AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
+    ```
 
-- **单卡场景下的收益有限**：
-  - FSDP 的主要优势在于多卡场景下的参数/梯度分片与通信调度。
-  - 在单卡环境下，FSDP 会自动切换到 `NO_SHARD` 模式（警告信息：`FSDP is switching to use NO_SHARD instead of ShardingStrategy.FULL_SHARD since the world size is 1`），实际上不进行参数分片，收益非常有限。
+- **FSDP + QLoRA 在技术上也是可行的**（重要更新）：
+  - 根据 [Hugging Face 官方文档](https://hugging-face.cn/docs/bitsandbytes/fsdp_qlora)，FSDP + QLoRA 可以通过 `bnb_4bit_quant_storage` 参数实现。
+  - **关键配置**：将量化权重的存储数据类型设置为浮点数据类型（如 `torch.bfloat16`），而不是默认的 `torch.uint8`：
+    ```python
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_quant_storage=torch.bfloat16,  # 关键：使用浮点类型存储
+    )
+    ```
+  - **原理**：通过 `quant_storage` 参数，可以将量化权重存储为 FSDP 支持的浮点数据类型（bfloat16、float16 或 float32），从而解决数据类型不兼容问题。
+  - **要求**：`quant_storage` 的数据类型必须与整个模型中使用的数据类型相匹配，因为 FSDP 只能包装具有相同浮点数据类型的层和模块。
+  - **结论**：FSDP + LoRA 和 FSDP + QLoRA 在技术上都是可行的，但需要正确的配置。
+
+- **单卡场景下的收益有限**（核心限制）：
+  - FSDP 的主要优势在于**多卡场景**下的参数/梯度分片与通信调度。
+  - **在单卡环境下，FSDP 会自动切换到 `NO_SHARD` 模式**（警告信息：`FSDP is switching to use NO_SHARD instead of ShardingStrategy.FULL_SHARD since the world size is 1`），实际上不进行参数分片，收益非常有限。
   - 鉴于 QLoRA 已经将 3B 模型的显存占用压缩到 ~7 GB，FSDP 在单卡下的额外收益几乎为零。
-
-- **数据类型统一的技术挑战**：
-  - 即使使用 LoRA（非量化），模型参数仍可能存在混合数据类型（`float16` 和 `float32`），FSDP 仍然无法处理。
-  - 要解决这个问题，需要在应用 FSDP 之前将所有参数转换为统一的数据类型，但这会破坏模型的原始精度配置，且对单卡场景的收益有限。
+  - **即使使用 LoRA + FSDP，在单卡环境下也无法发挥 FSDP 的分片优势**。
 
 - **最终决定**：
-  - 考虑到单卡场景下 FSDP 的收益有限，以及数据类型兼容性的技术挑战，我们选择**不在当前工程中强制实现 FSDP**。
+  - 考虑到**单卡场景下 FSDP 的收益有限**（会自动切换到 NO_SHARD 模式，无法发挥分片优势），以及**FSDP + QLoRA 在实际调试中遇到的兼容性问题**（如 Trainer 无法正确识别 FSDP 包裹的 PEFT 模型、数据类型不一致等），我们选择**不在当前单卡工程中实现 FSDP**。
+  - **如果未来有多卡环境**，FSDP + LoRA 和 FSDP + QLoRA 在技术上是可行的方案：
+    - **FSDP + LoRA**：需要 PyTorch >= 2.2，使用 `use_orig_params=True`
+    - **FSDP + QLoRA**：需要设置 `bnb_4bit_quant_storage=torch.bfloat16`（或 float16/float32），确保数据类型一致（参考 [Hugging Face 文档](https://hugging-face.cn/docs/bitsandbytes/fsdp_qlora)）
+  - 这些方案可以在多卡环境下进一步压缩显存并实现分布式训练（如文档中提到的在双 24GB GPU 上训练 70B 模型）。
+  - **当前单卡环境下的最佳实践**：使用 QLoRA + ZeRO-2 + GC，在显存和速度之间取得最佳平衡。
   - 在报告中给出 FSDP 的原理说明与未来扩展路径，作为技术储备的体现。
 
 ### 10.3 总结
@@ -1136,7 +1165,11 @@ Self CUDA time total: 3.904s
 这些未完成的尝试体现了我们在**分布式与高阶显存优化方向上的探索意愿与技术储备**，同时也如实说明了当前环境与时间条件下的工程折衷：
 
 1. **环境限制**：WSL 环境缺少完整的 CUDA 开发工具链，限制了 DeepSpeed 的使用。
-2. **技术限制**：FSDP 与量化方法（QLoRA）的数据类型不兼容，且单卡场景下收益有限。
+2. **技术限制**：
+   - FSDP + LoRA 和 FSDP + QLoRA 在技术上都是可行的：
+     - FSDP + LoRA：需要 PyTorch >= 2.2，使用 `use_orig_params=True`
+     - FSDP + QLoRA：需要设置 `bnb_4bit_quant_storage=torch.bfloat16`（或 float16/float32），确保数据类型一致（参考 [Hugging Face 文档](https://hugging-face.cn/docs/bitsandbytes/fsdp_qlora)）
+   - **核心限制**：单卡场景下 FSDP 会自动切换到 NO_SHARD 模式，无法发挥分片优势，收益有限。
 3. **工程权衡**：在单卡环境下，QLoRA 已经将显存从 28.45 GB 降低到 7.24 GB（节省 74.5%），满足了优化目标，FSDP/ZeRO 的额外收益有限。
 
 因此，我们最终实现了 **QLoRA + DeepSpeed ZeRO-2/3** 的组合优化。在单卡环境下，QLoRA+ZeRO-2 将显存占用降低到 5.45 GB（相比 Baseline 节省 80.8%），是显存与训练时间的最佳平衡。QLoRA+ZeRO-3 虽然显存占用几乎相同（5.48 GB），但训练时间显著增加，更适合多卡环境。这些实现充分满足了单卡环境下的显存优化需求，并为未来在多卡环境下的扩展提供了技术基础。

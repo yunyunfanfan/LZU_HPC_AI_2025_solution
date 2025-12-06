@@ -5,3 +5,4 @@ optimized_finetune_output/
 optimized_results/
 # 忽略大型模型权重目录
 Llama-3.2-3B-Instruct/
+2025LZU_HPC_AI选拔报告/
